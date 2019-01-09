@@ -1,0 +1,845 @@
+#
+# Copyright (C) 2018 Heinrich-Heine-Universitaet Duesseldorf, Institute of Computer Science, Department Operating Systems
+#
+# This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>
+#
+
+#!/bin/bash
+
+# Include guard
+if [ "$__CDEPL_APP_DXNET_INCLUDED" ]; then
+    return
+fi
+
+__CDEPL_APP_DXNET_INCLUDED="1"
+
+readonly __DXNET_BINARY="bin/dxnet"
+
+readonly __DXNET_PROCESS_IDENTIFIER="dxnetdeployscript"
+readonly __DXNET_REQUIRED_ENVIRONMENT="java/1.8 gcc/6.1"
+
+__DXNET_PATH=""
+__DXNET_CONFIG_PATH=""
+
+__DXNET_OUT_PATH=""
+__DXNET_OUT_CONF_PATH=""
+__DXNET_OUT_LOG_PATH=""
+
+__DXNET_TOTAL_NODES=""
+
+__DXNET_CACHED_NODES_CONFIG=""
+
+__DXNET_STATUS_PRINT_MS=""
+__DXNET_WORKLOAD=()
+__DXNET_MSG_SEND_COUNT=()
+__DXNET_MSG_RECV_COUNT=()
+__DXNET_MSG_SIZE=()
+__DXNET_REQUEST_PROBABILITY=()
+__DXNET_SEND_THREADS=()
+__DXNET_SEND_TARGETS=()
+__DXNET_NODE_NETWORK=""
+__DXNET_NODE_PORT=()
+__DXNET_NODE_MSG_HANDLER=()
+__DXNET_NODE_RUN_SUDO=()
+__DXNET_NODE_REMOTE_DEBUG_PORT=()
+__DXNET_NODE_REMOTE_PROFILE_YJP_PORT=()
+__DXNET_NODE_REMOTE_PROFILE_YJP_AGENT_LIB=()
+
+##
+# Initialize and setup dxnet environment. This must be called before any other
+# function of the dxnet module.
+#
+# $1 Path to folder containing build output of dxnet (or dxram) with bin, config,
+#    lib folder etc
+# $2 Number of nodes of allocation actually used
+##
+cdepl_app_dxnet_init()
+{
+	local path=$1
+	local total_nodes=$2
+
+	if [ "$total_nodes" -gt "$(cdepl_cluster_get_alloc_node_count)" ]; then
+		util_log_error_and_exit "[dxnet] Can't use more nodes ($total_nodes) than available/allocated $(cdepl_cluster_get_alloc_node_count)"
+	fi
+
+	__DXNET_PATH="$(cdepl_cluster_node_cmd 0 "readlink -f $path")"
+	__DXNET_TOTAL_NODES="$total_nodes"
+	__DXNET_CONFIG_PATH="${__DXNET_PATH}/config/dxnet.conf"
+
+	__DXNET_OUT_PATH="$(cdepl_run_get_cur_out_path)/dxnet"
+	__DXNET_OUT_CONF_PATH="${__DXNET_OUT_PATH}/conf"
+	__DXNET_OUT_LOG_PATH="${__DXNET_OUT_PATH}/log"
+
+	# Flush cache, have to generate new config with different nodes
+	__DXNET_CACHED_NODES_CONFIG=""
+
+	# Check if dxnet path is available
+	if [ ! "$__DXNET_PATH" ] || [ "$(cdepl_cluster_file_system_cmd "[ -d $__DXNET_PATH ] && echo \"1\"")" != "1" ]; then
+		util_log_error_and_exit "[dxnet]: Path does not exist ($path), resolved path: $__DXNET_PATH"
+	fi
+
+	__cdepl_app_dxnet_check
+	__cdepl_app_dxnet_check_config
+
+	# Output path setup
+	cdepl_cluster_file_system_cmd "mkdir -p $__DXNET_OUT_CONF_PATH"
+	cdepl_cluster_file_system_cmd "mkdir -p $__DXNET_OUT_LOG_PATH"
+
+	util_log "[dxnet] Initialized: $__DXNET_PATH"
+	util_log "[dxnet] Output: $__DXNET_OUT_PATH"
+}
+
+##
+# Set the interval (in ms) for printing the current benchmark state to stdout
+#
+# $1 Interval in ms when to print benchmark state
+##
+depl_app_dxnet_workload()
+{
+	local print_interval_ms=$1
+
+	__DXNET_STATUS_PRINT_MS="$print_interval_ms"
+}
+
+##
+# Set the workload type/id
+#
+# $1 node Target node id
+# $2 Workload type/id (please refer to DXNetMain for supported workloads)
+##
+depl_app_dxnet_workload()
+{
+	local node=$1
+	local workload=$2
+
+	if [ "$node" -ge "$__DXNET_TOTAL_NODES" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid node id $node > $__DXNET_TOTAL_NODES"
+	fi
+
+	if [ "$workload" -lt "0" ] || [ "$workload" -gt "3" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid workload: $workload"
+	fi
+
+	__DXNET_WORKLOAD[$node]="$workload"
+}
+
+##
+# Set the request probability for deadlock benachmark
+#
+# $1 node Target node id
+# $2 Request probability
+##
+depl_app_dxnet_reqprobability()
+{
+	local node=$1
+	local probability=$2
+
+	if [ "$node" -ge "$__DXNET_TOTAL_NODES" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid node id $node > $__DXNET_TOTAL_NODES"
+	fi
+
+	__DXNET_REQUEST_PROBABILITY[$node]="$probability"
+}
+
+##
+# Set the number of message  each node has to send to another node
+#
+# $1 node Target node id
+# $2 Message count
+##
+depl_app_dxnet_msg_send_count()
+{
+	local node=$1
+	local msg_count=$2
+
+	if [ "$node" -ge "$__DXNET_TOTAL_NODES" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid node id $node > $__DXNET_TOTAL_NODES"
+	fi
+
+	if [ "$msg_count" -lt "0" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid msg send count: $msg_count"
+	fi
+
+	__DXNET_MSG_SEND_COUNT[$node]="$msg_count"
+}
+
+##
+# Set the number of message each node has to recv from other nodes
+#
+# $1 node Target node id
+# $2 Message count
+##
+depl_app_dxnet_msg_recv_count()
+{
+	local node=$1
+	local msg_count=$2
+
+	if [ "$node" -ge "$__DXNET_TOTAL_NODES" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid node id $node > $__DXNET_TOTAL_NODES"
+	fi
+
+	if [ "$msg_count" -lt "0" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid msg recv count: $msg_count"
+	fi
+
+	__DXNET_MSG_RECV_COUNT[$node]="$msg_count"
+}
+
+##
+# Set the message size of the messages/requests to send/receive
+#
+# $1 node Target node id
+# $2 Message size in bytes
+##
+depl_app_dxnet_msg_size()
+{
+	local node=$1
+	local msg_size=$2
+
+	if [ "$node" -ge "$__DXNET_TOTAL_NODES" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid node id $node > $__DXNET_TOTAL_NODES"
+	fi
+
+	if [ "$msg_size" -lt "0" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid msg size: $msg_size"
+	fi
+
+	__DXNET_MSG_SIZE[$node]="$msg_size"
+}
+
+##
+# Set the number of send/application threads to use for sending the messages
+#
+# $1 node Target node id
+# $2 send_threads Number of send threads for the target node
+##
+cdepl_app_dxnet_node_send_threads()
+{
+	local node=$1
+	local send_threads=$2
+
+	if [ "$node" -ge "$__DXNET_TOTAL_NODES" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid node id $node > $__DXNET_TOTAL_NODES"
+	fi
+
+	if [ "$send_threads" -lt "0" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid send threads: $send_threads"
+	fi
+
+	__DXNET_SEND_THREADS[$node]="$send_threads"
+}
+
+##
+# Set the target nodes to send data to. Use this to create send/communication
+# patterns like point-to-point, one-to-all, all-to-all etc.
+#
+# $1 node Target node id
+# $2 target_nodeids A sequence of node ids this node has to send messages to
+#    e.g. send to nodes 2 and 3 for nodes 0-3: 2 3
+##
+cdepl_app_dxnet_node_send_targets()
+{
+	local node=$1
+	local target_nodeids="${@:2}"
+
+	if [ "$node" -ge "$__DXNET_TOTAL_NODES" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid node id $node > $__DXNET_TOTAL_NODES"
+	fi
+
+	__DXNET_SEND_TARGETS[$node]="$target_nodeids"
+}
+
+##
+# Set the network type
+#
+# $1 network Network type to use: Ethernet: eth, InfiniBand: ib, Loopback: lb
+##
+depl_app_dxnet_network()
+{
+	local network=$1
+
+	if [ "$network" != "eth" ] && [ "$network" != "ib" ] && [ "$network" != "lb" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid network type $network for node $node"
+	fi
+
+	__DXNET_NODE_NETWORK="$network"
+}
+
+##
+# Set a port (ethernet) for a node. A default port is set automatically but if
+# running on localhost, one has to set different ports for the "virtual nodes"
+# in order to run this on a single machine.
+#
+# $1 node Target node id
+# $2 port Port number to set
+##
+cdepl_app_dxnet_node_port()
+{
+	local node=$1
+	local port=$2
+
+	if [ "$node" -ge "$__DXNET_TOTAL_NODES" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid node id $node > $__DXNET_TOTAL_NODES"
+	fi
+
+	if [ "$port" -gt "65536" ] || [ "$port" -lt "0" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid port $port for node $node"
+	fi
+
+	__DXNET_NODE_PORT[$node]="$port"
+}
+
+##
+# Set the number of message handlers for a single node
+#
+# $1 node Target node id
+# $2 msg_handler Number of message handler to run on the target node
+##
+cdepl_app_dxnet_node_message_handler()
+{
+	local node=$1
+	local msg_handler=$2
+
+	if [ "$node" -ge "$__DXNET_TOTAL_NODES" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid node id $node > $__DXNET_TOTAL_NODES"
+	fi
+
+	__DXNET_NODE_MSG_HANDLER[$node]="$msg_handler"
+}
+
+##
+# Run the application as superuser on the target node. Depending on the cluster
+# and environment setup, this might be necessary for things like InfiniBand to
+# allow memory pinning.
+#
+# $1 node Target node id
+##
+cdepl_app_dxnet_run_as_sudo()
+{
+	local node=$1
+
+	if [ "$node" -ge "$__DXNET_TOTAL_NODES" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid node id $node > $__DXNET_TOTAL_NODES"
+	fi
+
+	if [ "$(cdepl_cluster_allows_sudo)" ]; then
+		__DXNET_NODE_RUN_SUDO[$node]="1"
+	else
+		util_log_warn "[$node][dxnet] Cluster type does not allow running commands as sudo, ignored"
+	fi
+}
+
+##
+# Hooks parameters and enables remote debugging for the application on the
+# specified node
+#
+# $1 node Target node id
+# $2 port Port for the remote debugger
+##
+cdepl_app_dxnet_remote_debug()
+{
+	local node=$1
+	local port=$2
+
+	if [ "$node" -ge "$__DXNET_TOTAL_NODES" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid node id $node > $__DXNET_TOTAL_NODES"
+	fi
+
+	__DXNET_NODE_REMOTE_DEBUG_PORT[$node]="$port"
+}
+
+##
+# Hooks parameters and enables remote profiling using the YourKit Java profiler
+# on the specified node
+#
+# $1 node Target node id
+# $2 port Port for the remote profiler
+# $3 agent_lib Path on the target node with the libyjpagent.so lib
+##
+cdepl_app_dxnet_remote_profile_yjp()
+{
+	local node=$1
+	local port=$2
+	local agent_lib=$3
+
+	if [ "$node" -ge "$__DXNET_TOTAL_NODES" ]; then
+		util_log_error_and_exit "[$node][dxnet] Invalid node id $node > $__DXNET_TOTAL_NODES"
+	fi
+
+	# Check if the agent lib is available
+	if [ "$(cdepl_cluster_node_cmd $node "[ -f $agent_lib ] && echo \"1\"")" != "1" ]; then
+		util_log_error_and_exit "[$node][dxnet] Could not find libyjpagent.so in $agent_lib"
+	fi
+
+	__DXNET_NODE_REMOTE_PROFILE_YJP_PORT[$node]="$port"
+	__DXNET_NODE_REMOTE_PROFILE_YJP_AGENT_LIB[$node]="$agent_lib"
+}
+
+##
+# Start a dxnet instance on the target node.
+#
+# $1 Target node id (or start node id of range if second parameter provided)
+# $2 Optional: Node id range end (including) and first parameter is interpreted
+#    as range start (including)
+##
+cdepl_app_dxnet_start_node()
+{
+	local node_range_start=$1
+	local node_range_end=$2
+
+	# We have to resolve these values once, only.
+	# Same as creating the cached nodes config to speed things up
+	if [ ! "$__DXNET_CACHED_NODES_CONFIG" ]; then
+		__cdepl_app_dxnet_resolve_default_config_values
+	fi
+
+	if [ "$node_range_end" ]; then
+		# If the initial cache isn't filled, create cache for first node
+		# then run everything else in parallel
+		if [ ! "$__DXNET_CACHED_NODES_CONFIG" ]; then
+			__cdepl_app_dxnet_create_node_base_config $node_range_start
+		fi
+
+		local counter=0
+		local pids=""
+
+		for node in $(seq $node_range_start $node_range_end); do
+			__cdepl_app_dxnet_start_node $node &
+			pids="$pids $!"
+		
+			counter=$((counter + 1))
+
+			# Parallel deploy in batches of 10 which is the default limit
+			# for parallel connections on ssh servers, stay slightly below 
+			# this limit (sometimes, 10 causes errors on multiplexing)
+			if [ "$counter" -ge "8" ]; then
+				wait $pids
+				pids=""
+				counter=0
+			fi
+		done
+
+		wait $pids
+	else
+		__cdepl_app_dxnet_start_node $node_range_start
+	fi
+}
+
+##
+# Cleanup any still running or remaining/crashed instances on the target node
+#
+# $1 Target node id (or start node id of range if second parameter provided)
+# $2 Optional: Node id range end (including) and first parameter is interpreted
+#    as range start (including)
+##
+cdepl_app_dxnet_node_cleanup()
+{
+	local node_range_start=$1
+	local node_range_end=$2
+
+	if [ "$node_range_end" ]; then
+		local counter=0
+		local pids=""
+
+		for node in $(seq $node_range_start $node_range_end); do
+			__cdepl_app_dxnet_node_cleanup $node &
+			pids="$pids $!"
+
+			counter=$((counter + 1))
+
+			# Parallel deploy in batches of 10 which is the default limit
+			# for parallel connections on ssh servers, stay slightly below 
+			# this limit (sometimes, 10 causes errors on multiplexing)
+			if [ "$counter" -ge "8" ]; then
+				wait $pids
+				sleep 1
+				pids=""
+				counter=0
+			fi
+		done
+
+		wait $pids
+	else
+		__cdepl_app_dxnet_node_cleanup $node_range_start
+	fi
+}
+
+##
+# Wait for a started instance to finish
+#
+# This will also print the current progress of the target instance
+#
+# $1 node Target node id
+# $2 hide_progress Specify 1 to hide the current progress (optional parameter)
+##
+cdepl_app_dxnet_node_wait_finished()
+{
+	local node=$1
+	local hide_progress=$2
+
+	local logfile=${__DXNET_OUT_LOG_PATH}/node${node}
+
+	util_log "[$node][dxnet] Waiting until finished..."
+
+	local first_progress=1
+
+	while true; do
+		if [ ! "$hide_progress" ]; then
+			local progress=$(cdepl_cluster_node_cmd $node "cat $logfile | grep '\[PROGRESS\]' | tail -n 1")
+
+			if [ ! "$progress" ]; then
+				echo -n "."
+			else
+				if [ "$first_progress" = "1" ]; then
+					first_progress=0
+					echo ""
+				fi
+
+				echo "[$node]${progress}"
+			fi
+		else
+			echo -n "."
+		fi
+
+		local pid="$(cdepl_cluster_node_cmd $node "pgrep -f '^java.*${__DXNET_PROCESS_IDENTIFIER}'")"
+		# Abort execution after an exception was thrown (every exception but NetworkResponseCancelledException)
+		local fail_error=$(cdepl_cluster_node_cmd $node "cat $logfile 2> /dev/null | sed 's,\x1B\[[0-9;]*[a-zA-Z],,g' | grep -i 'exception' | grep -v 'NetworkResponseCancelledException' | grep -v 'fpu_exception'")
+		# "A fatal error" -> JVM segfaults
+		local fail_error2=$(cdepl_cluster_node_cmd $node "cat $logfile 2> /dev/null | sed 's,\x1B\[[0-9;]*[a-zA-Z],,g' | grep -i -e '\[ERROR\]' -e '\# A fatal error'")
+
+		if [ "$fail_error" ] || [ "$fail_error2" ]; then
+			echo ""
+			err=""
+			
+			if [ "$fail_error" ]; then
+				err="$fail_error"
+			else
+				err="$fail_error2"
+			fi
+
+			util_log_error_and_exit "[$node][dxnet] Failed, error or exception:\n${err}\nSee log file $logfile"
+		fi
+
+		if [ ! "$pid" ]; then
+			echo ""
+			util_log "[$node][dxnet] Finished"
+			break;
+		fi
+
+		sleep 1.0
+	done
+}
+
+##
+# Grab and print the results of the target node after execution has finished
+#
+# $1 node Target node id
+##
+cdepl_app_dxnet_node_get_results()
+{
+	local node=$1
+
+	local logfile=${__DXNET_OUT_LOG_PATH}/node${node}
+
+	# Wait for results to appear
+	while true; do
+		local res="$(cdepl_cluster_node_cmd $node "cat $logfile | grep '\[RESULTS'")"
+
+		if [ ! "$res" ]; then
+			sleep 1
+			continue
+		fi
+
+		printf "%s\n" "$res"
+
+		break
+	done
+}
+
+##
+# Cleanup any still running or remaining/crashed instances on the target node
+#
+# $1 Target node id (or start node id of range if second parameter provided)
+# $2 Optional: Node id range end (including) and first parameter is interpreted
+#    as range start (including)
+##
+cdepl_app_dxnet_node_cleanup()
+{
+	local node_range_start=$1
+	local node_range_end=$2
+
+	if [ "$node_range_end" ]; then
+		local pids=""
+
+		for node in $(seq $node_range_start $node_range_end); do
+			__cdepl_app_dxnet_node_cleanup $node &
+			pids="$pids $!"
+		done
+
+		wait $pids
+	else
+		__cdepl_app_dxnet_node_cleanup $node_range_start
+	fi
+}
+
+__cdepl_app_dxnet_check()
+{
+	if [ "$(cdepl_cluster_node_cmd 0 "[ -f ${__DXNET_PATH}/${__DXNET_BINARY} ] && echo 1")" != "1" ]; then
+		util_log_error_and_exit "[0][dxnet] Could not find dxnet executable in $__DXNET_PATH/bin"
+	fi
+}
+
+__cdepl_app_dxnet_check_config()
+{
+	# Check if config file is available and create default config
+	if [ "$(cdepl_cluster_node_cmd 0 "[ -f $__DXNET_CONFIG_PATH ] && echo \"1\"")" != "1" ]; then
+		util_log "[0][dxnet] No config file available, creating default config: $__DXNET_CONFIG_PATH"
+
+		# Don't run this on the login node (might not have java installed)
+		# Use the first actual cluster node instead
+		cdepl_cluster_node_cmd 0 "cd $__DXNET_PATH && ./$__DXNET_BINARY $__DXNET_CONFIG_PATH > /dev/null 2>&1" "$__DXNET_REQUIRED_ENVIRONMENT"
+
+		# Sanity check
+		if [ "$(cdepl_cluster_node_cmd 0 "[ -f $__DXNET_CONFIG_PATH ] && echo \"1\"")" != "1" ]; then
+			util_log_error_and_exit "[0][dxnet] Creating config file $__DXNET_CONFIG_PATH failed"
+		fi
+	else
+		local config_content="$(cdepl_cluster_node_cmd 0 "cat "$__DXNET_CONFIG_PATH"")"
+		# Check if corrupted configuration file
+		local core_header=`echo $config_content | grep "m_coreConfig"`
+		if [ "$core_header" = "" ]; then
+			util_log "[0][dxnet] Configuration file $__DXNET_CONFIG_PATH corrupted, deleting and creating default"
+
+			# Configuration file seems to be corrupted -> start dxnet once to create new configuration
+			cdepl_cluster_node_cmd 0 "rm $__DXNET_CONFIG_PATH && cd $__DXNET_PATH && ./$__DXNET_BINARY $__DXNET_CONFIG_PATH > /dev/null 2>&1" "$__DXNET_REQUIRED_ENVIRONMENT"
+			cdepl_cluster_node_cmd 0 "sync"
+
+			# Sanity check
+			if [ "$(cdepl_cluster_node_cmd 0 "[ -f $__DXNET_CONFIG_PATH ] && echo \"1\"")" != "1" ]; then
+				util_log_error_and_exit "[0][dxnet] Creating config file $__DXNET_CONFIG_PATH failed"
+			fi
+		fi
+	fi
+}
+
+__cdepl_app_dxnet_resolve_default_config_values()
+{
+	if [ ! "$__DXNET_STATUS_PRINT_MS" ]; then
+		__DXNET_STATUS_PRINT_MS="1000"
+	fi
+
+	if [ ! "$__DXNET_NODE_NETWORK" ]; then
+		__DXNET_NODE_NETWORK="eth"
+	fi
+
+	local node_count="$__DXNET_TOTAL_NODES"
+
+	for i in `seq 0 $((node_count - 1))`; do
+		if [ ! "${__DXNET_WORKLOAD[$i]}" ]; then
+			__DXNET_WORKLOAD[$i]="0"
+		fi
+
+		if [ ! "${__DXNET_MSG_SEND_COUNT[$i]}" ]; then
+			__DXNET_MSG_SEND_COUNT[$i]="10000"
+		fi
+
+		if [ ! "${__DXNET_MSG_RECV_COUNT[$i]}" ]; then
+			__DXNET_MSG_RECV_COUNT[$i]="10000"
+		fi
+
+		if [ ! "${__DXNET_MSG_SIZE[$i]}" ]; then
+			__DXNET_MSG_SIZE[$i]="128"
+		fi
+
+		if [ ! "${__DXNET_NODE_PORT[$i]}" ]; then
+			__DXNET_NODE_PORT[$i]="22222"
+		fi
+
+		if [ "${__DXNET_SEND_THREADS[$i]}" = "" ]; then
+			__DXNET_SEND_THREADS[$i]="1"
+		fi
+
+		if [ "${__DXNET_NODE_MSG_HANDLER[$i]}" = "" ]; then
+			__DXNET_NODE_MSG_HANDLER[$i]="2"
+		fi
+	done
+}
+
+__cdepl_app_dxnet_create_node_base_config()
+{
+	local node=$1
+
+	local node_config_path="${__DXNET_OUT_CONF_PATH}/node_${node}.conf"
+	local tmp_file="$(cdepl_run_get_local_tmp_path)/tmp_dxnet_${node}.conf"
+
+	# Tremendously speed this up by caching the nodes config
+	if [ ! "$__DXNET_CACHED_NODES_CONFIG" ]; then
+		cdepl_cluster_download_from_remote $__DXNET_CONFIG_PATH $tmp_file
+		local node_config=$(cat $tmp_file)
+
+		# Insert node config mappings
+		# Create replacement string for nodes configuration:
+		local default_node="{
+			\"m_address\": {
+				\"m_ip\": \"IP_TEMPLATE\",
+				\"m_port\": PORT_TEMPLATE
+			},
+			\"m_nodeId\": \"NODE_ID_TEMPLATE\"
+		}"
+
+		local node_config_string=""
+		local first_iterartion=true
+
+		# Create "List" of node configs for configuration file
+		for i in `seq 0 $(($__DXNET_TOTAL_NODES - 1))`; do
+			local ip=""
+			local port=""
+
+			ip="$(cdepl_cluster_resolve_node_to_ip "$i")"
+
+			if [ ! "ip" ]; then
+				util_log_error_and_exit "[$node][dxnet] Could not resolve node to ip"
+			fi
+
+			port="${__DXNET_NODE_PORT[$i]}"
+
+			local node_string=`echo "$default_node" | sed "s/IP_TEMPLATE/$ip/" | sed "s/PORT_TEMPLATE/$port/" | sed "s/NODE_ID_TEMPLATE/$i/"`
+
+			# Separate items of list with ,
+			if [ "$first_iterartion" == true ]; then
+				node_config_string="${node_config_string}${node_string}"
+				first_iterartion=false
+			else
+				node_config_string="${node_config_string},${node_string}"
+			fi
+		done
+
+		# Close node config list
+		node_config_string="$(echo -e "$node_config_string\n      ],")"
+
+		# Replace nodes configuration:
+		local new_config="$(echo "${node_config}" | sed '/m_nodesConfig/q')"
+		new_config="${new_config}${node_config_string}"
+		local end="$(echo "${node_config}" | sed -ne '/m_nodesConfig/{s///; :a' -e 'n;p;ba' -e '}')"
+		end="$(echo "${end}" | sed -ne '/],/{s///; :a' -e 'n;p;ba' -e '}')"
+		new_config="$(echo -e "${new_config}\n${end}")"
+
+		# Apply further parameters
+		local network=""
+
+		if [ "$__DXNET_NODE_NETWORK" = "eth" ]; then
+			network="Ethernet"
+		elif [ "$__DXNET_NODE_NETWORK" = "ib" ]; then
+			network="Infiniband"
+		elif [ "$__DXNET_NODE_NETWORK" = "lb" ]; then
+			network="Loopback"
+		fi
+
+		new_config="$(echo "$new_config" | sed "s/m_device.*/m_device\": \"${network}\"/g")"
+		__DXNET_CACHED_NODES_CONFIG="$new_config"
+	else
+		new_config="$__DXNET_CACHED_NODES_CONFIG"
+	fi
+
+	# Apply further node specific parameters
+	
+	local msg_handler_cnt="${__DXNET_NODE_MSG_HANDLER[$node]}"
+
+	new_config="$(echo "$new_config" | sed "s/m_numMessageHandlerThreads.*/m_numMessageHandlerThreads\": \"${msg_handler_cnt}\"\,/g")"
+
+	echo "$new_config" > $tmp_file
+	sync
+
+	# Write back new config
+	cdepl_cluster_upload_to_remote $tmp_file $node_config_path
+}
+
+__cdepl_app_dxnet_start()
+{
+	local node=$1
+	local logfile=$2
+
+	local node_config_path="${__DXNET_OUT_CONF_PATH}/node_${node}.conf"
+
+	util_log "[$node][dxnet] Starting dxnet, logfile: $logfile config: $node_config_path"
+
+	local vm_opts=""
+
+	# Required to fix JNI crashing with libIbdxnet (see JNINotes.md in ibnet repository)
+	vm_opts="-XX:+UseMembar"
+
+	# Development and debugging
+
+	local root=""
+	if [ "${__DXNET_NODE_RUN_SUDO[$node]}" = "1" ]; then
+		util_log "[$node][dxnet] Running with sudo"
+		root="sudo -E -P"
+	fi
+
+	if [ "${__DXNET_NODE_REMOTE_DEBUG_PORT[$node]}" != "" ]; then
+		vm_opts="$vm_opts -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=${__DXNET_NODE_REMOTE_DEBUG_PORT[$node]}"
+		util_log "[$node][dxnet][P] Enabled remote debugging on port ${__DXNET_NODE_REMOTE_DEBUG_PORT[$node]}"
+		util_log "[$node][dxnet][P] On your local machine: establish a tunnel using 'ssh <target_hostname> -L ${__DXNET_NODE_REMOTE_DEBUG_PORT[$node]}:<target_hostname>:${__DXNET_NODE_REMOTE_DEBUG_PORT[$node]}' and connect your debugger to localhost, port ${__DXNET_NODE_REMOTE_DEBUG_PORT[$node]}"
+	fi
+
+	if [ "${__DXNET_NODE_REMOTE_PROFILE_YJP_PORT[$node]}" != "" ]; then
+		vm_opts="$vm_opts -agentpath:${__DXNET_NODE_REMOTE_PROFILE_YJP_AGENT_LIB[$node]}=port=${__DXNET_NODE_REMOTE_PROFILE_YJP_PORT[$node]}"
+
+		util_log "[$node][dxnet] On your local machine: establish a tunnel using 'ssh <target_hostname> -L ${__DXNET_NODE_REMOTE_PROFILE_YJP_PORT[$node]}:<target_hostname>:${__DXNET_NODE_REMOTE_PROFILE_YJP_PORT[$node]}' and connect with yourkit using 'Connect to remote application' with the arguments 'localhost:${__DXNET_NODE_REMOTE_PROFILE_YJP_PORT[$node]}'"
+	fi
+
+	local args="$node_config_path $__DXNET_STATUS_PRINT_MS ${__DXNET_WORKLOAD[$node]} ${__DXNET_MSG_SEND_COUNT[$node]} ${__DXNET_MSG_RECV_COUNT[$node]} ${__DXNET_MSG_SIZE[$node]} ${__DXNET_SEND_THREADS[$node]} ${__DXNET_REQUEST_PROBABILITY[$node]} $node ${__DXNET_SEND_TARGETS[$node]}"
+
+	# Don't use && instead of ;
+	# This will hang if ssh with controlmaster and nohup is used
+	cdepl_cluster_node_cmd $node "cd $__DXNET_PATH ; JAVA_OPTS='$vm_opts' DXNET_OPTS='-D${__DXNET_PROCESS_IDENTIFIER}' $root nohup ./$__DXNET_BINARY $args > $logfile 2>&1 &" "$__DXNET_REQUIRED_ENVIRONMENT"
+}
+
+__cdepl_app_dxnet_start_node()
+{
+	local node=$1
+
+	local logfile=${__DXNET_OUT_LOG_PATH}/node${node}
+
+	__cdepl_app_dxnet_create_node_base_config $node
+	__cdepl_app_dxnet_start $node $logfile
+}
+
+__cdepl_app_dxnet_node_cleanup()
+{
+	local node=$1
+
+	util_log "[$node][dxnet] Cleanup..."
+
+	local pid="$(cdepl_cluster_node_cmd $node "pgrep -f '^java.*${__DXNET_PROCESS_IDENTIFIER}'")"
+
+	if [ "$pid" ]; then
+		# If we or someone else left some garbage processes on the node multiple
+		# pids are returned
+		for i in $pid; do
+			local kill_out=$(cdepl_cluster_node_cmd $node "kill -9 $i 2>&1")
+
+			if [ "$?" = "0" ] && [ ! "$kill_out" ]; then
+				util_log "[$node][dxnet] Killed (pid: $i)"
+			elif [ "$kill_out" ]; then
+				# Probably operation not permitted, try root
+				cdepl_cluster_node_cmd $node "sudo -P kill -9 $i > /dev/null 2>&1"
+
+				if [ "$?" = "0" ]; then
+					util_log "[$node][dxnet] Killed (root) (pid: $i)"
+				elif [ "$?" != "1" ]; then
+					util_log_warn "[$node][dxnet] Killing (root) $i failed, DXNet instance(s) might stay alive"
+				fi
+			elif [ "$?" != "1" ]; then
+				util_log_warn "[$node][dxnet] Killing $i failed, DXNet instance(s) might stay alive"
+			fi
+		done
+	fi
+}
