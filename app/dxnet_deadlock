@@ -1,3 +1,5 @@
+#!/bin/bash
+
 #
 # Copyright (C) 2018 Heinrich-Heine-Universitaet Duesseldorf, Institute of Computer Science, Department Operating Systems
 #
@@ -10,8 +12,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>
 #
-
-#!/bin/bash
 
 # Include guard
 if [ "$__CDEPL_APP_DXNET_INCLUDED" ]; then
@@ -816,21 +816,24 @@ __cdepl_app_dxnet_node_cleanup()
 {
 	local node=$1
 
-	util_log "[$node][dxnet] Cleanup..."
+	util_log "[$node][dxnet] Cleanup"
 
 	local pid="$(cdepl_cluster_node_cmd $node "pgrep -f '^java.*${__DXNET_PROCESS_IDENTIFIER}'")"
+
+	local kill_binary=$(which kill)	
 
 	if [ "$pid" ]; then
 		# If we or someone else left some garbage processes on the node multiple
 		# pids are returned
+		util_log "PIDS: $pid"
 		for i in $pid; do
-			local kill_out=$(cdepl_cluster_node_cmd $node "kill -9 $i 2>&1")
+			local kill_out=$(cdepl_cluster_node_cmd $node "$kill_binary -9 $i 2>&1")	
 
 			if [ "$?" = "0" ] && [ ! "$kill_out" ]; then
 				util_log "[$node][dxnet] Killed (pid: $i)"
-			elif [ "$kill_out" ]; then
+			elif [ "$kill_out" ]; then		
 				# Probably operation not permitted, try root
-				cdepl_cluster_node_cmd $node "sudo -P kill -9 $i > /dev/null 2>&1"
+				cdepl_cluster_node_cmd $node "sudo -P $kill_binary -9 $i > /dev/null 2>&1"
 
 				if [ "$?" = "0" ]; then
 					util_log "[$node][dxnet] Killed (root) (pid: $i)"
@@ -840,6 +843,7 @@ __cdepl_app_dxnet_node_cleanup()
 			elif [ "$?" != "1" ]; then
 				util_log_warn "[$node][dxnet] Killing $i failed, DXNet instance(s) might stay alive"
 			fi
+			
 		done
 	fi
 }

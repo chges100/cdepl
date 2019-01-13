@@ -1,0 +1,29 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2018 Heinrich-Heine-Universitaet Duesseldorf, Institute of Computer Science, Department Operating Systems
+#
+# This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>
+#
+
+# Includes
+source "app/dxnet_deadlock"
+
+# DXNet path
+DXNET_PATH=""
+
+_cdepl_kill_application()
+{
+    local dxnet_path="$(cdepl_cluster_application_install_dir)/dxnet"
+    local total_nodes=$(cdepl_cluster_get_alloc_node_count)
+    
+    cdepl_app_dxnet_init $dxnet_path $total_nodes
+	cdepl_app_dxnet_node_cleanup 0 $((total_nodes - 1))
+}
