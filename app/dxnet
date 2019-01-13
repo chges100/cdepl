@@ -641,7 +641,7 @@ __cdepl_app_dxnet_resolve_default_config_values()
 		fi
 
 		if [ ! "${__DXNET_NODE_PORT[$i]}" ]; then
-			__DXNET_NODE_PORT[$i]="22222"
+			__DXNET_NODE_PORT[$i]="$((22222 + $i))"
 		fi
 
 		if [ "${__DXNET_SEND_THREADS[$i]}" = "" ]; then
