@@ -1,3 +1,5 @@
+#!/bin/bash
+
 #
 # Copyright (C) 2018 Heinrich-Heine-Universitaet Duesseldorf, Institute of Computer Science, Department Operating Systems
 #
@@ -11,7 +13,6 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>
 #
 
-#!/bin/bash
 
 # Include guard
 if [ "$__CDEPL_APP_DXNET_INCLUDED" ]; then
@@ -801,17 +802,19 @@ __cdepl_app_dxnet_node_cleanup()
 
 	local pid="$(cdepl_cluster_node_cmd $node "pgrep -f '^java.*${__DXNET_PROCESS_IDENTIFIER}'")"
 
+	local kill_binary=$(which kill)
+
 	if [ "$pid" ]; then
 		# If we or someone else left some garbage processes on the node multiple
 		# pids are returned
 		for i in $pid; do
-			local kill_out=$(cdepl_cluster_node_cmd $node "kill -9 $i 2>&1")
+			local kill_out=$(cdepl_cluster_node_cmd $node "$kill_binary -9 $i 2>&1")
 
 			if [ "$?" = "0" ] && [ ! "$kill_out" ]; then
 				util_log "[$node][dxnet] Killed (pid: $i)"
 			elif [ "$kill_out" ]; then
 				# Probably operation not permitted, try root
-				cdepl_cluster_node_cmd $node "sudo -P kill -9 $i > /dev/null 2>&1"
+				cdepl_cluster_node_cmd $node "sudo -P $kill_binary -9 $i > /dev/null 2>&1"
 
 				if [ "$?" = "0" ]; then
 					util_log "[$node][dxnet] Killed (root) (pid: $i)"
