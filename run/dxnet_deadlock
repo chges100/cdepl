@@ -41,6 +41,9 @@ _cdepl_run_application()
 		util_log "Executing comprehensive benchmark, network type $network_type"
 
 		benchmark_00 $network_type
+		benchmark_01 $network_type
+		benchmark_02 $network_type
+		benchmark_03 $network_type
 
 	elif [ "$#" = "2" ]; then
 		local benchmark_func=$1
@@ -273,8 +276,7 @@ benchmark()
 }
 
 ##
-# End-to-end (full duplex) base line for throughput and saturation of messages
-# with increasing payload size
+# Simple two-point benchmark to detect deadlocks with 0.1 request probability
 #
 # $1 Network type to use: ib, eth
 ##
@@ -282,5 +284,41 @@ benchmark_00()
 {
 	local network_type=$1
 
-	benchmark $network_type "all2all" 2 "msg" 1000 32 8 2 0.1 "benchmark_00"
+	benchmark $network_type "all2all" 2 "msg" 1000 32 2 2 0.1 "benchmark_00"
+}
+
+##
+# Simple two-point benchmark to detect deadlocks with 0.2 request probability
+#
+# $1 Network type to use: ib, eth
+##
+benchmark_01()
+{
+	local network_type=$1
+
+	benchmark $network_type "all2all" 2 "msg" 1000 32 2 2 0.2 "benchmark_00"
+}
+
+##
+# Simple two-point benchmark to detect deadlocks with 0.3 request probability
+#
+# $1 Network type to use: ib, eth
+##
+benchmark_02()
+{
+	local network_type=$1
+
+	benchmark $network_type "all2all" 2 "msg" 1000 32 2 2 0.3 "benchmark_00"
+}
+
+##
+# Simple two-point benchmark to detect deadlocks with 0.4 request probability
+#
+# $1 Network type to use: ib, eth
+##
+benchmark_03()
+{
+	local network_type=$1
+
+	benchmark $network_type "all2all" 2 "msg" 1000 32 2 2 0.4 "benchmark_00"
 }

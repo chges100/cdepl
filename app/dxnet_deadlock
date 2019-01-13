@@ -825,7 +825,6 @@ __cdepl_app_dxnet_node_cleanup()
 	if [ "$pid" ]; then
 		# If we or someone else left some garbage processes on the node multiple
 		# pids are returned
-		util_log "PIDS: $pid"
 		for i in $pid; do
 			local kill_out=$(cdepl_cluster_node_cmd $node "$kill_binary -9 $i 2>&1")	
 
