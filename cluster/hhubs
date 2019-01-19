@@ -18,7 +18,9 @@
 # group of the Heinrich-Heine-University Duesseldorf
 #
 
-__HHUBS_SOLLIPULLI_MODE=0
+readonly __HHUBS_SOLLIPULLI_IP="134.99.70.210"
+readonly __HHUBS_SOLLIPULLI_IP_NODE_PREFIX="10.112.51"
+
 __HHUBS_SOLLIPULLI_USER=""
 __HHUBS_SOLLIPULLI_APP_INSTALL_DIR=""
 __HHUBS_SOLLIPULLI_CDEPL_OUT_DIR=""
@@ -61,7 +63,7 @@ cdepl_cluster_resolve_hostname_to_ip()
 	if [ ! "$node_id" ]; then
 		echo ""
 	else
-		echo "10.0.0.$node_id"
+		echo "$__HHUBS_SOLLIPULLI_IP_NODE_PREFIX.$node_id"
 	fi
 }
 
@@ -328,11 +330,7 @@ cdepl_cluster_show_logs()
 {
 	local path="$1"
 
-	if [ "$__HHUBS_SOLLIPULLI_MODE" = "1" ]; then
-		ssh -t sollipulli "less +F -R $path/*"
-	else
-		ssh -t -p 55517 ${__HHUBS_SOLLIPULLI_USER}@134.99.112.82 "less +F -R $path/*"
-	fi
+	ssh -t $__HHUBS_SOLLIPULLI_IP "less +F -R $path/*"
 }
 
 ##################################
@@ -371,11 +369,7 @@ __cdepl_cluster_hhubs_remote_node_cmd()
 
 	local dest=""
 
-	if [ "$__HHUBS_SOLLIPULLI_MODE" = "1" ]; then
-		dest="${__HHUBS_SOLLIPULLI_USER}@sollipulli"
-	else
-		dest="${__HHUBS_SOLLIPULLI_USER}@134.99.112.82 -p 55517"
-	fi
+	dest="${__HHUBS_SOLLIPULLI_USER}@${__HHUBS_SOLLIPULLI_IP}"
 
 	# -n -f for nohup
 	# Use ControlMaster to establish the TCP connection, once and keep it active
@@ -396,12 +390,7 @@ __cdepl_cluster_hhubs_upload_to_sollipulli()
 	local dest=""
 	local port=""
 
-	if [ "$__HHUBS_SOLLIPULLI_MODE" = "1" ]; then
-		dest="${__HHUBS_SOLLIPULLI_USER}@sollipulli:${remote_path}"
-	else
-		port="-P 55517"
-		dest="${__HHUBS_SOLLIPULLI_USER}@134.99.112.82:${remote_path}"
-	fi
+	dest="${__HHUBS_SOLLIPULLI_USER}@${__HHUBS_SOLLIPULLI_IP}:${remote_path}"
 
 	if [ "$recursive " ]; then
 		recursive="-r"
@@ -410,7 +399,7 @@ __cdepl_cluster_hhubs_upload_to_sollipulli()
 	# Use ControlMaster to establish the TCP connection, once and keep it active
 	# until all sessions are closed and no further session was established
 	# within 60 seconds
-	scp $recursive -o ControlMaster=auto -o ControlPath=~/.ssh/cdepl_%r@%h:%p.sock -o ControlPersist=60 $port $local_path $dest > /dev/null 2>&1
+	scp $recursive -o ControlMaster=auto -o ControlPath=~/.ssh/cdepl_%r@%h:%p.sock -o ControlPersist=60 $local_path $dest > /dev/null 2>&1
 }
 
 __cdepl_cluster_hhubs_download_from_sollipulli()
@@ -422,12 +411,7 @@ __cdepl_cluster_hhubs_download_from_sollipulli()
 	local dest=""
 	local port=""
 
-	if [ "$__HHUBS_SOLLIPULLI_MODE" = "1" ]; then
-		dest="${__HHUBS_SOLLIPULLI_USER}@sollipulli:${remote_path}"
-	else
-		port="-P 55517"
-		dest="${__HHUBS_SOLLIPULLI_USER}@134.99.112.82:${remote_path}"
-	fi
+	dest="${__HHUBS_SOLLIPULLI_USER}@${__HHUBS_SOLLIPULLI_IP}:${remote_path}"
 
 	if [ "$recursive " ]; then
 		recursive="-r"
@@ -436,7 +420,7 @@ __cdepl_cluster_hhubs_download_from_sollipulli()
 	# Use ControlMaster to establish the TCP connection, once and keep it active
 	# until all sessions are closed and no further session was established
 	# within 60 seconds
-	scp $recursive -o ControlMaster=auto -o ControlPath=~/.ssh/cdepl_%r@%h:%p.sock -o ControlPersist=60 $port $dest $local_path > /dev/null 2>&1
+	scp $recursive -o ControlMaster=auto -o ControlPath=~/.ssh/cdepl_%r@%h:%p.sock -o ControlPersist=60 $dest $local_path > /dev/null 2>&1
 }
 
 __cdepl_cluster_hhubs_remote_sollipulli_cmd()
@@ -445,11 +429,7 @@ __cdepl_cluster_hhubs_remote_sollipulli_cmd()
 
 	local dest=""
 
-	if [ "$__HHUBS_SOLLIPULLI_MODE" = "1" ]; then
-		dest="${__HHUBS_SOLLIPULLI_USER}@sollipulli"
-	else
-		dest="${__HHUBS_SOLLIPULLI_USER}@134.99.112.82 -p 55517"
-	fi
+	dest="${__HHUBS_SOLLIPULLI_USER}@${__HHUBS_SOLLIPULLI_IP}"
 
 	# -n -f for nohup
 	# Use ControlMaster to establish the TCP connection, once and keep it active
@@ -463,42 +443,13 @@ __cdepl_cluster_hhubs_remote_sollipulli_cmd()
 
 __cdepl_cluster_hhubs_sollipulli_check()
 {
-	ping -c 1 sollipulli > /dev/null 2>&1
-
-	# Check if sollipulli is reachable on the current net
-	if [ "$?" != "0" ]; then
-
-		# Try directly via IP
-		ping -c 1 134.99.112.82 > /dev/null 2>&1
-
-		if [ "$?" != "0" ]; then
-			util_log_error_and_exit "[hhubs] Could not contact sollipulli, not available"
-		else
-			__HHUBS_SOLLIPULLI_MODE=2
-		fi
-	else
-		__HHUBS_SOLLIPULLI_MODE=1
-	fi
-
-	# Check if passwordless auth available
-	if [ "$__HHUBS_SOLLIPULLI_MODE" = "1" ]; then
-		ssh -o PasswordAuthentication=no -o BatchMode=yes sollipulli exit &> /dev/null
-	else
-		ssh -p 55517 -o PasswordAuthentication=no -o BatchMode=yes ${__HHUBS_SOLLIPULLI_USER}@134.99.112.82 exit &> /dev/null
-	fi
+	output="$(ssh -o ConnectTimeout=3 -o PasswordAuthentication=no -o BatchMode=yes ${__HHUBS_SOLLIPULLI_USER}@${__HHUBS_SOLLIPULLI_IP} exit)"
 
 	if [ "$?" != "0" ]; then
-		# Check if the login node is reachable
-		local state="$(ping -c1 -W1 134.99.112.82 &> /dev/null && echo '1' || echo '')"
-
-		if [ ! "$state" ]; then
-			util_log_error_and_exit "[hhubs] Can't connect to login node, server down or not reachable"
-		else
-			util_log_error_and_exit "[hhubs] Can't connect to login node, ensure passwordless auth is set up and the cluster user is valid"
-		fi
+		util_log_error_and_exit "[hhubs] Can't connect to login node, either login node not reachable or publickey auth failed. Ensure passwordless auth is set up and the cluster user is valid. Output from ssh command: $output"
 	fi
 
-	util_log_debug "[hhubs] sollipulli available, mode $__HHUBS_SOLLIPULLI_MODE"
+	util_log_debug "[hhubs] sollipulli available"
 }
 
 __cdepl_cluster_hhubs_alloc_hardware_specs()

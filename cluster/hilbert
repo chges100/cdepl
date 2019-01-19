@@ -20,6 +20,8 @@
 
 readonly __HILBERT_MAX_NODES="112"
 readonly __HILBERT_HOSTNAME="hpc.rz.uni-duesseldorf.de"
+readonly __HILBERT_SUBNET="10.28.2"
+readonly __HILBERT_ID_REGEX="hilbert([0-9]+).*"
 
 readonly __HILBERT_QSUB="/opt/pbs/bin/qsub"
 readonly __HILBERT_QDEL="/opt/pbs/bin/qdel"
@@ -78,9 +80,11 @@ cdepl_cluster_resolve_hostname_to_ip()
 	local hostname=$1
 
 	#|hilbert(\d+)|10.28.($1/255+2).($1%255)| 
-	local node_id="$(echo "$hostname" | sed 's/hilbert//')"
+	#local node_id="$(echo "$hostname" | sed 's/hilbert//')"
 
-	echo "10.28.2.$node_id"
+	[[ $hostname =~ $__HILBERT_ID_REGEX ]]
+
+	echo "$__HILBERT_SUBNET.${BASH_REMATCH[1]}"
 }
 
 cdepl_cluster_resolve_node_to_ip()

@@ -32,6 +32,8 @@ _cdepl_run_application()
     local msg_handler="2"
 	local print_logs=false
 	local start_terminal=false
+	local start_agent=false
+	local ms_service=false
 
 	PARAMS=""
 	while (( "$#" )); do
@@ -52,16 +54,20 @@ _cdepl_run_application()
 			msg_handler="$2"
 			shift 2
 			;;
-		--handler)
-			msg_handler="$2"
-			shift 2
-			;;
 		--print-logs)
 			print_logs=true
 			shift 1
 			;;
 		--terminal)
 			start_terminal=true
+			shift 1
+			;;
+		--monitor)
+			start_agent=true
+			shift 1
+			;;
+		--ms-service)
+			ms_service=true
 			shift 1
 			;;
 		--) # end argument parsing
@@ -120,16 +126,6 @@ _cdepl_run_application()
 
 	util_log "Starting $num_superpeers superpeers and $num_peers peers (kvss: $kvss_mb MB each, $msg_handler msg handler)"
 
-	# Initilize zookeeper deployment
-	cdepl_app_zookeeper_init $zookeeper_path
-
-	# Start zookeeper instance and wait until started
-	cdepl_app_zookeeper_start $ZK_NODE $ZK_PORT
-	cdepl_app_zookeeper_wait_started $ZK_NODE
-
-	# Cleanup of failed startups in zookeeper
-	cdepl_app_zookeeper_remove $ZK_NODE "/dxram"
-
 	# Initialize dxram deployment
 	cdepl_app_dxram_init $dxram_path $ZK_NODE $ZK_PORT
 
@@ -147,6 +143,22 @@ _cdepl_run_application()
 		cdepl_app_dxram_node_port $i $DX_PEER_PORT_START
 		DX_PEER_PORT_START=$((DX_PEER_PORT_START + 1))
 	done
+	
+	# Run jokolia agent if specified
+	if [ "$start_agent" = true ] ; then
+		cdepl_app_dxram_start_agent "${peer_node_offset}"
+	fi
+	
+	# Config MasterSlave service
+	if [ "$ms_service" = true ] ; then
+		for i in $(seq $peer_node_offset $((peer_node_offset + num_peers - 1))); do
+			if [ $i = $peer_node_offset ] ; then
+				cdepl_app_dxram_master_slave_role $i "master"
+			else
+				cdepl_app_dxram_master_slave_role $i "slave"
+			fi
+		done
+	fi
 
 	# Add terminal to autostart
 	if [ "$start_terminal" = true ] ; then

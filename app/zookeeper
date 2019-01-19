@@ -22,10 +22,12 @@ __CDEPL_APP_ZOOKEEPER_INCLUDED="1"
 
 __ZOOKEEPER_PATH=""
 __ZOOKEEPER_OUT_PATH=""
+__ZOOKEEPER_DATA_DIR=""
 
 readonly __ZOOKEEPER_LOG_FILE_POSTFIX="_server"
 readonly __ZOOKEEPER_LOG_FILE_CLIENT_POSTFIX="_client"
 readonly __ZOOKEEPER_CONF_FILE="conf/zoo.cfg"
+readonly __ZOOKEEPER_DATA_DIR_REGEX="dataDir=([^[:space:]]+)"
 
 readonly __ZOOKEEPER_REQUIRED_ENVIRONMENT="java/1.8"
 
@@ -41,7 +43,15 @@ cdepl_app_zookeeper_init()
 		return
 	fi
 
-	cdepl_cluster_node_cmd "0" "sed -i 's/dataDir=.*/dataDir=\/tmp\/zookeeper/' $__ZOOKEEPER_PATH/$__ZOOKEEPER_CONF_FILE"
+	local config=$(cdepl_cluster_node_cmd "0" "cat $__ZOOKEEPER_PATH/$__ZOOKEEPER_CONF_FILE")
+
+	if [[ $config =~ $__ZOOKEEPER_DATA_DIR_REGEX ]]
+	then
+		__ZOOKEEPER_DATA_DIR=${BASH_REMATCH[1]}
+	else
+		util_log_error "[zookeeper]: Could not read zookeeper data directory from configuration file"
+		return
+	fi
 
 	util_log "[zookeeper] Initialized: $__ZOOKEEPER_PATH"
 	util_log "[zookeeper] Output: $__ZOOKEEPER_OUT_PATH"
@@ -62,7 +72,7 @@ cdepl_app_zookeeper_start()
 
 	# Delete Zookeeper's previous data directory
 	util_log "[$node][zookeeper] Deleting zookeeper data directory"
-	cdepl_cluster_node_cmd "$node" "rm -rf /tmp/zookeeper"
+	cdepl_cluster_node_cmd "$node" "rm -rf $__ZOOKEEPER_DATA_DIR"
 
 	util_log "[$node][zookeeper] Starting, logfile: $logfile"
 

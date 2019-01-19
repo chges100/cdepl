@@ -6,7 +6,7 @@ This enables clear separation of the actual hardware to deploy to and the
 application getting deployed.
 
 Different cluster (type) implementations map to specific cluster setups with
-their dedicated environments. For example, the *localhost* type maps the 
+their dedicated environments. For example, the *local* type maps the 
 abstraction layer to your current machine for quick testing or simple debugging 
 tasks. If you use the *simple* cluster type, you can deploy to an arbitrary
 cluster setup by providing a list of hostnames. Further types handle
@@ -44,13 +44,13 @@ distributions.
 The root script *cdepl* spawns an interactive shell to execute various commands.
 You have to specify the type of cluster when running it, e.g. 
 ```
-./cdepl localhost
+./cdepl local
 ```
 
 If you run this the fist time and depending on the cluster type, you get errors
 about missing configuration values. Create a configuration file next to the
 root cdepl script called ".cdepl_XXX" where XXX is replaced with the cluster
-type, e.g. ".cdepl_localhost". Just add the missing key-value tuples similar
+type, e.g. ".cdepl_local". Just add the missing key-value tuples similar
 to a standard properties file, e.g.
 ```
 user=clusterUser100
@@ -95,7 +95,7 @@ own script, too.
 # Cluster modules
 If you have a cluster setup that does not match or work with any of the 
 currently implemented modules, you can implement your own. Take a look at
-existing modules (e.g. localhost) to get an idea which functions must be 
+existing modules (e.g. local) to get an idea which functions must be 
 implemented. Tt's very likely that you can copy/paste code of the already 
 implemented functions and solved problems.
 
