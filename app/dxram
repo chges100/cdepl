@@ -38,6 +38,8 @@ readonly __DXRAM_DEFAULT_STARTUP_CONDITION="!---ooo---!"
 
 readonly __DXRAM_REQUIRED_ENVIRONMENT="java/1.8 gcc/6.1"
 
+
+
 __DXRAM_RESOLVED_DEFAULT_VALUES=""
 
 __DXRAM_PATH=""
@@ -66,6 +68,8 @@ __DXRAM_NODE_MS_ROLE=()
 __DXRAM_NODE_AUTOSTART_APP=()
 __DXRAM_NODE_AUTOSTART_ARGS=()
 __DXRAM_NODE_AUTOSTART_INIT_ID=()
+
+__DXRAM_NODE_START_AGENT=()
 
 ##
 # Initialize and setup the DXRAM environment. This must be called before any
@@ -156,6 +160,23 @@ cdepl_app_dxram_node_port()
 	fi
 
 	__DXRAM_NODE_PORT[$node]="$port"
+}
+
+##
+# Launches the jokolia agent on the specified node
+#
+# $1 node Node of the DXRAM instance
+##
+cdepl_app_dxram_start_agent()
+{
+	local node=$1
+
+
+	if [ "$node" -ge "$(cdepl_cluster_get_alloc_node_count)" ]; then
+		util_log_error_and_exit "[$node][dxram] Invalid node id $node > $(cdepl_cluster_get_alloc_node_count)"
+	fi
+
+	__DXRAM_NODE_START_AGENT[$node]=true
 }
 
 ##
@@ -659,6 +680,10 @@ __cdepl_app_dxram_start_superpeer()
 		vm_opts="$vm_opts -Ddxram.m_componentConfigs[NetworkComponent].m_coreConfig.m_numMessageHandlerThreads=${__DXRAM_NODE_MSG_HANDLER[$node]}"
 	fi
 
+	if [ "${__DXRAM_ZOOKEEPER_NODE}" = "$node" ]; then
+		vm_opts="$vm_opts -Ddxram.m_componentConfigs[ZookeeperBootComponent].m_isBootstrap=true"
+	fi
+
 	# Development and debugging
 
 	local root=""
@@ -677,6 +702,10 @@ __cdepl_app_dxram_start_superpeer()
 		vm_opts="$vm_opts -agentpath:${__DXRAM_NODE_REMOTE_PROFILE_YJP_AGENT_LIB[$node]}=port=${__DXRAM_NODE_REMOTE_PROFILE_YJP_PORT[$node]}"
 
 		util_log "[$node][dxram][S] On your local machine: establish a tunnel using 'ssh <target_hostname> -L ${__DXRAM_NODE_REMOTE_PROFILE_YJP_PORT[$node]}:<target_hostname>:${__DXRAM_NODE_REMOTE_PROFILE_YJP_PORT[$node]}' and connect with yourkit using 'Connect to remote application' with the arguments 'localhost:${__DXRAM_NODE_REMOTE_PROFILE_YJP_PORT[$node]}'"
+	fi
+	
+	if [ "${__DXRAM_NODE_START_AGENT[$node]}" = true ]; then
+		vm_opts="$vm_opts -javaagent:$__DXRAM_PATH/jmx/jolokia.jar"
 	fi
 
 	# Don't use && instead of ;
@@ -715,6 +744,10 @@ __cdepl_app_dxram_start_peer()
 	local zookeeper_ip="$(cdepl_cluster_resolve_node_to_ip "$__DXRAM_ZOOKEEPER_NODE")"
 	vm_opts="$vm_opts -Ddxram.m_componentConfigs[ZookeeperBootComponent].m_connection.m_ip=${zookeeper_ip}"
 	vm_opts="$vm_opts -Ddxram.m_componentConfigs[ZookeeperBootComponent].m_connection.m_port=${__DXRAM_ZOOKEEPER_PORT}"
+
+	if [ "${__DXRAM_ZOOKEEPER_NODE}" = "$node" ]; then
+		vm_opts="$vm_opts -Ddxram.m_componentConfigs[ZookeeperBootComponent].m_isBootstrap=true"
+	fi
 	
 	# Optional dxram node specific settings
 
@@ -732,7 +765,7 @@ __cdepl_app_dxram_start_peer()
 	fi
 
 	if [ "${__DXRAM_NODE_MS_ROLE[$node]}" ]; then
-		vm_opts="$vm_opts -Ddxram.m_serviceConfigs[MasterSlaveComputeServiceConfig].m_role=${__DXRAM_NODE_MS_ROLE[$node]}"
+		vm_opts="$vm_opts -Ddxram.m_serviceConfigs[MasterSlaveComputeService].m_role=${__DXRAM_NODE_MS_ROLE[$node]}"
 	fi
 
 	if [ "${__DXRAM_NODE_PEER_KVSS[$node]}" ]; then
@@ -765,6 +798,10 @@ __cdepl_app_dxram_start_peer()
 		vm_opts="$vm_opts -agentpath:${__DXRAM_NODE_REMOTE_PROFILE_YJP_AGENT_LIB[$node]}=port=${__DXRAM_NODE_REMOTE_PROFILE_YJP_PORT[$node]}"
 
 		util_log "[$node][dxram][P] On your local machine: establish a tunnel using 'ssh <target_hostname> -L ${__DXRAM_NODE_REMOTE_PROFILE_YJP_PORT[$node]}:<target_hostname>:${__DXRAM_NODE_REMOTE_PROFILE_YJP_PORT[$node]}' and connect with yourkit using 'Connect to remote application' with the arguments 'localhost:${__DXRAM_NODE_REMOTE_PROFILE_YJP_PORT[$node]}'"
+	fi
+	
+	if [ "${__DXRAM_NODE_START_AGENT[$node]}" = true ]; then
+		vm_opts="$vm_opts -javaagent:$__DXRAM_PATH/jmx/jolokia.jar"
 	fi
 
 	# Don't use && instead of ;
