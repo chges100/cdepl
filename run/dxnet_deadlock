@@ -38,7 +38,7 @@ _cdepl_run_application()
 	if [ "$#" = "1" ]; then
 		local network_type=$1
 
-		util_log "Executing comprehensive benchmark, network type $network_type"
+		util_log "Executing comprehensive benchmark for deadlock tests, network type $network_type"
 
 		benchmark_00 $network_type
 		benchmark_01 $network_type
@@ -53,7 +53,7 @@ _cdepl_run_application()
 
 		eval "$benchmark_func $network_type"
 	elif [ "$#" = "8" ]; then
-		util_log "Executing benchmark with user specified parameters"
+		util_log "Executing benchmark for deadlock test with user specified parameters"
 
 		benchmark ${@} "benchmark_$(date '+%Y-%m-%d_%H-%M-%S-%3N')"
 	else
@@ -276,7 +276,7 @@ benchmark()
 }
 
 ##
-# Simple two-point benchmark to detect deadlocks with 0.1 request probability
+# Simple two-point benchmark to detect deadlocks with 0.5 request probability and 20 send threads
 #
 # $1 Network type to use: ib, eth
 ##
@@ -288,7 +288,7 @@ benchmark_00()
 }
 
 ##
-# Simple two-point benchmark to detect deadlocks with 0.2 request probability
+# Simple two-point benchmark to detect deadlocks with 0.5 request probability and 100 send threads
 #
 # $1 Network type to use: ib, eth
 ##
@@ -300,7 +300,7 @@ benchmark_01()
 }
 
 ##
-# Simple two-point benchmark to detect deadlocks with 0.3 request probability
+# Simple two-point benchmark to detect deadlocks with 0.7 request probability and 20 send threads
 #
 # $1 Network type to use: ib, eth
 ##
@@ -312,7 +312,7 @@ benchmark_02()
 }
 
 ##
-# Simple two-point benchmark to detect deadlocks with 0.4 request probability
+# Simple two-point benchmark to detect deadlocks with 0.7 request probability and 100 send threads
 #
 # $1 Network type to use: ib, eth
 ##
